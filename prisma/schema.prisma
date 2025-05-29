@@ -1,0 +1,377 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * Enums Definitions
+ */
+enum UserRole {
+  ADMIN
+  SALES
+  MANAGER
+  BASIC
+}
+
+enum ProductType {
+  BISCUIT
+  CANDY
+}
+
+enum StoreType {
+  BARU
+  TERVERIFIKASI
+  TIDAK_AKTIF
+}
+
+enum OrderStatus {
+  DRAFT
+  DISETUJUI
+  TERKIRIM
+  TIDAK_TERKIRIM
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum PriceType {
+  GROSIR
+  SEMI_GROSIR
+  RETAIL
+  MODERN
+  CUSTOM
+}
+
+/**
+ * User Model (Auth.js)
+ */
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  role          UserRole  @default(BASIC)
+  isActive      Boolean   @default(true)
+
+  // Auth.js Relationships
+  accounts       Account[] // Required by Auth.js for OAuth/credentials
+  sessions       Session[] // Required by Auth.js for session management
+  authenticators Authenticator[] // Optional for WebAuth support
+
+  // Existing Relationships from Original Schema
+  salesOrders  Order[]         @relation("SalesOrders")
+  stores       Store[]
+  visits       Visit[]
+  generatedPOs PurchaseOrder[] @relation("AdminGeneratedPOs")
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email, role])
+}
+
+/**
+ * Auth.js Required Models
+ */
+model Account {
+  userId            String  @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([provider, providerAccountId])
+}
+
+/**
+ * Auth.js Required Models
+ */
+model Session {
+  sessionToken String   @unique
+  userId       String   @db.Uuid
+  expires      DateTime
+
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sessions")
+}
+
+/**
+ * Auth.js Required Models
+ */
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+}
+
+/**
+ * Optional for WebAuthn support
+ */
+model Authenticator {
+  credentialID         String  @unique
+  userId               String  @db.Uuid
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+  @@map("authenticators")
+}
+
+/**
+ * Price List Model
+ */
+model PriceList {
+  id              String  @id @default(uuid()) @db.Uuid
+  productId       String  @db.Uuid
+  grosirPrice     Decimal @db.Decimal(8, 2)
+  semiGrosirPrice Decimal @db.Decimal(8, 2)
+  retailPrice     Decimal @db.Decimal(8, 2)
+  modernPrice     Decimal @db.Decimal(8, 2)
+
+  // Relationships
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([productId])
+  @@map("price_lists")
+}
+
+/**
+ * Discount Model
+ */
+model Discount {
+  id          String       @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  type        DiscountType
+  value       Decimal      @db.Decimal(10, 2)
+
+  // Relationships
+  orderItems OrderItem[]
+  orders     Order[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+  @@map("discounts")
+}
+
+/**
+ * Product Model
+ */
+model Product {
+  id          String      @id @default(uuid()) @db.Uuid
+  name        String
+  imageUrl    String?
+  description String?
+  category    ProductType
+  isActive    Boolean     @default(true)
+
+  // Relationships
+  orderItems OrderItem[]
+  priceList  PriceList?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name, category, isActive])
+  @@map("products")
+}
+
+/**
+ * Store Model
+ */
+model Store {
+  id            String    @id @default(uuid()) @db.Uuid
+  name          String
+  province      String
+  regency       String
+  district      String
+  address       String
+  gmapsLink     String?
+  detailAddress String?
+  phoneNumber   String?
+  storeType     StoreType @default(BARU)
+  isActive      Boolean   @default(true)
+  notes         String?
+
+  // Relationships
+  orders Order[]
+  visits Visit[]
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String? @db.Uuid
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([name, province, regency, district])
+  @@index([name, province, regency, district])
+  @@map("stores")
+}
+
+/**
+ * Visit Model
+ */
+model Visit {
+  id              String   @id @default(uuid()) @db.Uuid
+  storeId         String   @db.Uuid
+  salesId         String   @db.Uuid
+  visitDate       DateTime @default(now())
+  checkInTime     DateTime
+  visitDuration   Int? // in minutes
+  isStockChecked  Boolean  @default(false)
+  isDebtCollected Boolean  @default(false)
+  notes           String?
+  orderId         String?  @unique @db.Uuid
+
+  // Relationships
+  store Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  sales User   @relation(fields: [salesId], references: [id], onDelete: Cascade)
+  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([storeId, salesId, visitDate])
+  @@map("visits")
+}
+
+/**
+ * Order Model
+ */
+model Order {
+  id                       String      @id @default(uuid()) @db.Uuid
+  orderNumber              String      @unique // PO-YYYYMMDD-000
+  orderDate                DateTime    @default(now())
+  status                   OrderStatus @default(DRAFT)
+  subtotal                 Decimal     @db.Decimal(11, 2)
+  total                    Decimal     @db.Decimal(11, 2)
+  orderDiscount            Decimal     @default(0) @db.Decimal(10, 2)
+  orderDiscountDescription String?
+  notes                    String?
+  deliveryDate             DateTime?
+  rejectionReason          String?
+  rejectedAt               DateTime?
+  rejectedBy               String?
+  approvedAt               DateTime?
+  approvedBy               String?
+  statusHistory            Json?
+
+  // Relationships fields
+  salesId String @db.Uuid
+  storeId String @db.Uuid
+
+  // Relationships
+  sales         User           @relation("SalesOrders", fields: [salesId], references: [id], onDelete: Restrict)
+  store         Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  discounts     Discount[]
+  visit         Visit?
+  purchaseOrder PurchaseOrder?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderDate, status, salesId, storeId])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+/**
+ * OrderItem Model
+ */
+model OrderItem {
+  id                  String    @id @default(uuid()) @db.Uuid
+  orderId             String    @db.Uuid
+  productId           String    @db.Uuid
+  quantity            Int
+  priceType           PriceType @default(MODERN)
+  unitPrice           Decimal   @db.Decimal(8, 2)
+  customPrice         Decimal?  @db.Decimal(8, 2)
+  customPriceReason   String?
+  itemDiscount        Decimal   @default(0) @db.Decimal(10, 2)
+  discountDescription String?
+  subtotal            Decimal   @db.Decimal(11, 2)
+
+  // Relationships
+  order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+  discounts Discount[]
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId, productId])
+  @@map("order_items")
+}
+
+/**
+ * PurchaseOrder Model
+ */
+model PurchaseOrder {
+  id          String   @id @default(uuid()) @db.Uuid
+  orderNumber String
+  generatedAt DateTime @default(now())
+  fileName    String
+  fileUrl     String
+
+  // Relationships
+  orderId String @unique @db.Uuid
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  adminId String @db.Uuid
+  admin   User   @relation("AdminGeneratedPOs", fields: [adminId], references: [id], onDelete: Restrict)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderNumber])
+  @@map("purchase_orders")
+}
