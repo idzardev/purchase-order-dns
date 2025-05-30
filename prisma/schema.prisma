@@ -76,6 +76,7 @@ model User {
   updatedAt DateTime @updatedAt
 
   @@index([email, role])
+  @@index([isActive])
 }
 
 /**
@@ -118,8 +119,6 @@ model Session {
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  @@map("sessions")
 }
 
 /**
@@ -131,7 +130,6 @@ model VerificationToken {
   expires    DateTime
 
   @@id([identifier, token])
-  @@map("verification_tokens")
 }
 
 /**
@@ -151,7 +149,6 @@ model Authenticator {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, credentialID])
-  @@map("authenticators")
 }
 
 /**
@@ -173,29 +170,6 @@ model PriceList {
   updatedAt DateTime @updatedAt
 
   @@unique([productId])
-  @@map("price_lists")
-}
-
-/**
- * Discount Model
- */
-model Discount {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String
-  description String?
-  type        DiscountType
-  value       Decimal      @db.Decimal(10, 2)
-
-  // Relationships
-  orderItems OrderItem[]
-  orders     Order[]
-
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([name])
-  @@map("discounts")
 }
 
 /**
@@ -204,6 +178,7 @@ model Discount {
 model Product {
   id          String      @id @default(uuid()) @db.Uuid
   name        String
+  code        String?     @unique
   imageUrl    String?
   description String?
   category    ProductType
@@ -218,7 +193,7 @@ model Product {
   updatedAt DateTime @updatedAt
 
   @@index([name, category, isActive])
-  @@map("products")
+  @@index([code])
 }
 
 /**
@@ -237,20 +212,22 @@ model Store {
   storeType     StoreType @default(BARU)
   isActive      Boolean   @default(true)
   notes         String?
+  ownerName     String?
+  ownerPhone    String?
 
   // Relationships
-  orders Order[]
-  visits Visit[]
-  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
-  userId String? @db.Uuid
+  orders    Order[]
+  visits    Visit[]
+  createdBy User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId    String? @db.Uuid
 
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([name, province, regency, district])
-  @@index([name, province, regency, district])
-  @@map("stores")
+  @@index([name, province, regency, district, storeType])
+  @@index([storeType, isActive])
 }
 
 /**
@@ -266,32 +243,33 @@ model Visit {
   isStockChecked  Boolean  @default(false)
   isDebtCollected Boolean  @default(false)
   notes           String?
-  orderId         String?  @unique @db.Uuid
 
   // Relationships
-  store Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
-  sales User   @relation(fields: [salesId], references: [id], onDelete: Cascade)
-  order Order? @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  store Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  sales User   @relation(fields: [salesId], references: [id], onDelete: Restrict)
+  order Order?
 
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([storeId, salesId, visitDate])
-  @@map("visits")
+  @@index([salesId, visitDate])
 }
 
 /**
  * Order Model
  */
 model Order {
-  id                       String      @id @default(uuid()) @db.Uuid
-  orderNumber              String      @unique // PO-YYYYMMDD-000
-  orderDate                DateTime    @default(now())
-  status                   OrderStatus @default(DRAFT)
-  subtotal                 Decimal     @db.Decimal(11, 2)
-  total                    Decimal     @db.Decimal(11, 2)
-  orderDiscount            Decimal     @default(0) @db.Decimal(10, 2)
+  id                       String        @id @default(uuid()) @db.Uuid
+  orderNumber              String        @unique // PO-YYYYMMDD-000
+  orderDate                DateTime      @default(now())
+  status                   OrderStatus   @default(DRAFT)
+  subtotal                 Decimal       @db.Decimal(11, 2) // before discount
+  total                    Decimal       @db.Decimal(11, 2) // after discount
+  orderDiscountType        DiscountType?
+  orderDiscountValue       Decimal       @default(0) @db.Decimal(10, 2)
+  orderDiscountAmount      Decimal       @default(0) @db.Decimal(12, 2)
   orderDiscountDescription String?
   notes                    String?
   deliveryDate             DateTime?
@@ -300,18 +278,18 @@ model Order {
   rejectedBy               String?
   approvedAt               DateTime?
   approvedBy               String?
-  statusHistory            Json?
+  statusHistory            Json?         @default("[]")
 
   // Relationships fields
-  salesId String @db.Uuid
-  storeId String @db.Uuid
+  salesId String  @db.Uuid
+  storeId String  @db.Uuid
+  visitId String? @unique @db.Uuid
 
   // Relationships
   sales         User           @relation("SalesOrders", fields: [salesId], references: [id], onDelete: Restrict)
   store         Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  visit         Visit?         @relation(fields: [visitId], references: [id], onDelete: SetNull)
   items         OrderItem[]
-  discounts     Discount[]
-  visit         Visit?
   purchaseOrder PurchaseOrder?
 
   // Timestamps
@@ -320,36 +298,37 @@ model Order {
 
   @@index([orderDate, status, salesId, storeId])
   @@index([orderNumber])
-  @@map("orders")
+  @@index([status, createdAt])
 }
 
 /**
  * OrderItem Model
  */
 model OrderItem {
-  id                  String    @id @default(uuid()) @db.Uuid
-  orderId             String    @db.Uuid
-  productId           String    @db.Uuid
-  quantity            Int
-  priceType           PriceType @default(MODERN)
-  unitPrice           Decimal   @db.Decimal(8, 2)
-  customPrice         Decimal?  @db.Decimal(8, 2)
-  customPriceReason   String?
-  itemDiscount        Decimal   @default(0) @db.Decimal(10, 2)
-  discountDescription String?
-  subtotal            Decimal   @db.Decimal(11, 2)
+  id                      String        @id @default(uuid()) @db.Uuid
+  orderId                 String        @db.Uuid
+  productId               String        @db.Uuid
+  quantity                Int
+  priceType               PriceType     @default(MODERN)
+  unitPrice               Decimal       @db.Decimal(8, 2)
+  customPrice             Decimal?      @db.Decimal(8, 2)
+  customPriceReason       String?
+  itemDiscountType        DiscountType?
+  itemDiscountValue       Decimal       @default(0) @db.Decimal(10, 2)
+  itemDiscountAmount      Decimal       @default(0) @db.Decimal(12, 2)
+  itemDiscountDescription String?
+  subtotal                Decimal       @db.Decimal(11, 2) // (quantity * finalPrice) - itemDiscountAmount
+  finalPrice              Decimal       @db.Decimal(10, 2) // customPrice ?? unitPrice
 
   // Relationships
-  order     Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product   Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
-  discounts Discount[]
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
 
   // Timestamps
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([orderId, productId])
-  @@map("order_items")
 }
 
 /**
@@ -357,10 +336,10 @@ model OrderItem {
  */
 model PurchaseOrder {
   id          String   @id @default(uuid()) @db.Uuid
-  orderNumber String
+  orderNumber String   @unique // PO-YYYYMMDD-000
   generatedAt DateTime @default(now())
-  fileName    String
-  fileUrl     String
+  fileName    String?
+  fileUrl     String?
 
   // Relationships
   orderId String @unique @db.Uuid
@@ -373,5 +352,5 @@ model PurchaseOrder {
   updatedAt DateTime @updatedAt
 
   @@index([orderNumber])
-  @@map("purchase_orders")
+  @@index([generatedAt])
 }
